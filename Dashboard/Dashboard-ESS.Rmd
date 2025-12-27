@@ -25,13 +25,14 @@ library(rnaturalearthdata)
 library(shadowtext)
 library(leaflet)
 library(htmltools)
-
+library(crosstalk)
 
 # 2. Cargar Datos
 
 ess_data <- read_csv("../Datos/Base de datos depurada.csv") 
 
-# Preparación del mapa
+# GRAFICO MAPA
+
 mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
 
 # Corrección del código de Noruega
@@ -44,7 +45,8 @@ mapa_mundo <- cbind(mapa_mundo, coords)
 # Ajuste manual de la etiqueta de Noruega
 mapa_mundo$Y[mapa_mundo$admin == "Norway"] <- 62
 
-# 1. Diccionario de Países (Tu código)
+
+# Diccionario de Países (Tu código)
 nombres_paises <- c(
   "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
   "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
@@ -56,7 +58,7 @@ nombres_paises <- c(
   "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
 )
 
-# 2. Calcular las 3 medias a la vez
+# Calcular las 3 medias a la vez
 datos_sociales <- ess_data %>%
   filter(essround == 11) %>%
   select(cntry, ppltrst, pplfair, pplhlp) %>%
@@ -70,12 +72,13 @@ datos_sociales <- ess_data %>%
   ) %>%
   mutate(Nombre_Pais = recode(cntry, !!!nombres_paises))
 
-# 3. Unir con el mapa base (Usando tu objeto mapa_mundo corregido con Noruega)
-# Asegúrate de que 'mapa_mundo' ya tiene el fix de Noruega que hicimos antes
+# 3. Unir con el mapa base 
+
 mapa_completo <- mapa_mundo %>%
   left_join(datos_sociales, by = c("iso_a2" = "cntry")) %>%
   filter(!is.na(Media_Confianza)) # Filtramos los que tienen datos
 
+--------------------------------------------------------------------------
 
 #GRAFICO MARIPOSA
 
@@ -84,6 +87,8 @@ datos_netustm <- ess_data %>%
   filter(essround == 11) %>%
   filter(netustm <= 1440) %>%
   mutate(Horas = netustm / 60)
+
+--------------------------------------------------------------------------
 
 # GRAFICO DE PERFILES
 
@@ -114,7 +119,8 @@ resumen_perfiles <- datos_perfiles %>%
   # Reordenamos los niveles para que el gráfico se vea ordenado (opcional)
   arrange(desc(Media_Confianza))
 
-
+--------------------------------------------------------------------------
+  
 #GRAFICO DE DISPERSION INTERNET 
 
 # 1. Limpieza y preparación
@@ -152,6 +158,8 @@ grid_horas$Pred_Trust <- predict(fit_trust, newdata = grid_horas)
 grid_horas$Pred_Fair  <- predict(fit_fair, newdata = grid_horas)
 grid_horas$Pred_Help  <- predict(fit_help, newdata = grid_horas)
 
+--------------------------------------------------------------------------
+
 # GRAFICO DISPERSION NOTICIAS
 
 # 1. Limpieza y Jitter
@@ -187,6 +195,8 @@ grid_news$Pred_Trust <- predict(fit_news_trust, newdata = grid_news)
 grid_news$Pred_Fair  <- predict(fit_news_fair, newdata = grid_news)
 grid_news$Pred_Help  <- predict(fit_news_help, newdata = grid_news)
 
+
+
 ```
 
 Row {data-height=600}
@@ -213,7 +223,7 @@ leaflet(data = mapa_completo) %>%
   addPolygons(
     fillColor = ~paleta(Media_Confianza),
     weight = 1, color = "white", fillOpacity = 0.9,
-    group = "Confianza Interpersonal", # Nombre para el botón
+    group = "Confianza Int.", # Nombre para el botón
     # Lo que sale al pasar el mouse (Tooltip)
     label = ~paste0(Nombre_Pais, ": ", round(Media_Confianza, 2)), 
     highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
@@ -223,7 +233,7 @@ leaflet(data = mapa_completo) %>%
   addPolygons(
     fillColor = ~paleta(Media_Justicia),
     weight = 1, color = "white", fillOpacity = 0.9,
-    group = "Justicia Social", # Nombre para el botón
+    group = "Perc. Justicia", # Nombre para el botón
     label = ~paste0(Nombre_Pais, ": ", round(Media_Justicia, 2)),
     highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
   ) %>%
@@ -232,7 +242,7 @@ leaflet(data = mapa_completo) %>%
   addPolygons(
     fillColor = ~paleta(Media_Ayuda),
     weight = 1, color = "white", fillOpacity = 0.9,
-    group = "Ayuda Social", # Nombre para el botón
+    group = "Perc. Apoyo", # Nombre para el botón
     label = ~paste0(Nombre_Pais, ": ", round(Media_Ayuda, 2)),
     highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
   ) %>%
@@ -471,7 +481,7 @@ plot_ly() %>%
   # LAYOUT Y MENÚS
   # ------------------------------------------------------------
   layout(
-    title = "Uso de Internet vs. Capital Social",
+    title = "Uso de Internet vs. Confianza Interpersonal",
     xaxis = list(title = "Tiempo diario en Internet (Horas)", range = c(0, 24)),
     yaxis = list(title = "Nivel (0-10)", range = c(0, 11)),
     showlegend = FALSE,
@@ -667,7 +677,7 @@ plot_ly() %>%
   # CONFIGURACIÓN DEL MENÚ
   # ------------------------------------------------------------
   layout(
-    title = "Consumo de Noticias vs. Capital Social",
+    title = "Consumo de Noticias vs. Confianza Interpersonal",
     xaxis = list(title = "Tiempo diario en Noticias (Horas)", range = c(0, 24)),
     yaxis = list(title = "Nivel (0-10)", range = c(0, 11)),
     showlegend = FALSE,
