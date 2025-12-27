@@ -2,29 +2,352 @@
 title: "Presentación"
 author: "Tafur Mendoza, Arnold A."
 date: "2025-12-26"
-output: pdf_document
+output: 
+    ioslides_presentation: 
+        widescreen: true   
+        smaller: false     
 ---
 
+```{css, echo=FALSE}
+/* ESTILOS PERSONALIZADOS */
+
+/* 1. Fondo blanco y letra negra (quita el gris) */
+body, p, li, div, span {
+  color: black !important;
+}
+
+/* 2. Títulos en negro y negrita */
+h1, h2, h3, h4, h5, h6 {
+  color: black !important;
+  font-weight: bold;
+}
+
+/* 3. Aumentar tamaño de letra general */
+slides > slide {
+  font-size: 28px !important;
+}
+
+/* 4. Aumentar espacio entre viñetas para leer mejor */
+li {
+  margin-bottom: 10px;
+}
+
+/* 5. Forzar que los controles de navegación siempre sean visibles (opcional) */
+slide-deck::after {
+  content: "Usa las flechas del teclado <- ->";
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  font-size: 12px;
+  color: red;
+}
+
+
+<script>
+  // Script para forzar el inicio en la primera diapositiva
+  document.addEventListener('DOMContentLoaded', function() {
+    // Si la página ya tiene un hash (ej. #5), lo reseteamos a #1
+    if (window.location.hash !== "#1") {
+      window.location.hash = "1";
+    }
+  });
+</script>
+
 ```{r setup, include=FALSE}
+
+
 knitr::opts_chunk$set(echo = TRUE)
+
+# Configuración global: Ocultar código, warnings y mensajes para que la slide se vea limpia
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# Cargar todas las librerías necesarias
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(viridis)
+library(tidyr)
+library(gridExtra) # Para organizar gráficos juntos
+library(shadowtext) # Necesario para las letras con borde (instalar si falta)
+library(sf)         # Aseguramos carga de sf
+
+
+# CARGA DE DATOS
+# Nota: Asegúrate de que la ruta sea correcta relativa a donde guardas este archivo
+datos <- read.csv("../Datos/Base de datos depurada.csv")
+
+# DEFINICIÓN DE NOMBRES DE PAÍSES (Variable global)
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
 ```
 
-## R Markdown
+## Objetivos del Proyecto
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+El objetivo general es examinar cómo las percepciones sociales se relacionan con los patrones de consumo digital en Europa (ESS Ronda 11, 2023).
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Objetivos específicos:
+
+Visualizar la distribución geográfica de la confianza interpersonal.
+
+Evaluar si el consumo de noticias (Internet vs. Tradicional) se asocia con la confianza.
+
+Comparar perfiles de países según intensidad de uso de Internet.
+
+
+## Estadísticos descriptivos (Tabla 1)
+
+A continuación, un resumen de las variables principales analizadas:
 
 ```{r cars}
-summary(cars)
+
+resumen_medias <- datos %>%
+  filter(essround == 11) %>%            
+  filter(netustm <= 1440, nwspol <= 1440) %>%
+  summarise(
+    N_total = n(),
+    Mean_Trust = mean(ppltrst, na.rm = TRUE),
+    Mean_Justice = mean(pplfair, na.rm = TRUE),
+    Mean_Helpfulness = mean(pplhlp, na.rm = TRUE),
+    # Minutos
+    Mean_Net_Min = mean(netustm, na.rm = TRUE),
+    Mean_News_Min = mean(nwspol, na.rm = TRUE),
+    # Horas
+    Mean_Net_Hr = mean(netustm, na.rm = TRUE) / 60,
+    Mean_News_Hr = mean(nwspol, na.rm = TRUE) / 60
+  )
+
+datos_limpios_cor <- datos %>%
+  filter(essround == 11) %>%
+  filter(netustm <= 1440, nwspol <= 1440)
+
+r_net_trust <- cor(datos_limpios_cor$netustm, datos_limpios_cor$ppltrst, 
+                   use = "complete.obs", method = "pearson")
+n_net_trust <- sum(complete.cases(datos_limpios_cor$netustm, datos_limpios_cor$ppltrst))
+
+r_news_trust <- cor(datos_limpios_cor$nwspol, datos_limpios_cor$ppltrst, 
+                    use = "complete.obs", method = "pearson")
+n_news_trust <- sum(complete.cases(datos_limpios_cor$nwspol, datos_limpios_cor$ppltrst))
+
+resumen_correlaciones <- data.frame(
+  Cor_Net_Trust = r_net_trust,
+  N_Valid_Net   = n_net_trust,
+  Cor_News_Trust = r_news_trust, 
+  N_Valid_News   = n_news_trust
+)
+
+kable(resumen_medias, digits = 2, caption = "Medias y tiempos de uso",
+      col.names = c("N", "Trust", "Justice", "Help", 
+                    "Net(min)", "News(min)", "Net(h)", "News(h)"))
+
 ```
 
-## Including Plots
+## Análisis de Descriptivos:
 
-You can also embed plots, for example:
+Variables Sociales: Todas superan el punto medio. Destaca Justicia (6.03) como la más alta, seguida de Confianza (5.34).
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+Consumo de Medios: Predominio digital. El uso de Internet (3.95h) duplica ampliamente al de Noticias Tradicionales (1.52h).
+
+
+## Correlaciones (Tabla 2)
+¿Influye el tiempo de consumo en la confianza?
+
+```{r correlation}
+
+kable(resumen_correlaciones, digits = 3, caption = "Correlaciones de Pearson (vs. Confianza)",
+      col.names = c("r (Net-Trust)", "N", "r (News-Trust)", "N"))
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Análisis de Relación
+
+Impacto Nulo: La cantidad de tiempo consumido no tiene impacto significativo.Coeficientes: Internet muestra una relación marginal positiva ($r = 0.014$) y las noticias una negativa ($r = -0.009$), ambas prácticamente inexistentes.Conclusión: La duración de la exposición no determina la confianza interpersonal.
+
+## Mapa de Confianza Interpersonal
+
+```{r map, echo=FALSE}
+
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
+datos_mapa <- datos %>%
+  filter(essround == 11) %>%
+  select(cntry, ppltrst) %>%
+  mutate(ppltrst = as.numeric(ppltrst)) %>%
+  filter(ppltrst <= 10) %>%        
+  drop_na(ppltrst) %>%
+  group_by(cntry) %>%
+  summarise(Media_Confianza = mean(ppltrst, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Nombre_Etiqueta = recode(cntry, !!!nombres_paises))
+
+
+mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
+
+mapa_mundo$iso_a2[mapa_mundo$admin == "Norway"] <- "NO"
+
+mapa_final <- mapa_mundo %>%
+  left_join(datos_mapa, by = c("iso_a2" = "cntry")) %>%
+  filter(!is.na(Media_Confianza))
+
+coords <- st_coordinates(st_centroid(mapa_final))
+mapa_final <- cbind(mapa_final, coords)
+
+mapa_final$Y[mapa_final$admin == "Norway"] <- 62 
+
+ggplot(data = mapa_final) +
+
+  geom_sf(aes(fill = Media_Confianza), color = "black", size = 0.2) +
+  
+  geom_shadowtext(
+    aes(x = X, y = Y, label = Nombre_Etiqueta), 
+    size = 2, 
+    fontface = "bold", 
+    color = "white",    
+    bg.color = "black", 
+    bg.r = 0.1,         
+    check_overlap = FALSE
+  ) +
+  
+  coord_sf(xlim = c(-25, 45), ylim = c(30, 72), expand = FALSE) +
+  
+  scale_fill_viridis_c(option = "magma", direction = -1, name = "Confianza (0-10)") +
+  
+  labs(
+    title = "Confianza Interpersonal en Europa (2023)",
+    subtitle = "Promedio de nivel de confianza por país" # Opcional
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    panel.background = element_rect(fill = "#cbcbcb", color = NA), # Fondo gris mar
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"), # Título centrado y más grande
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+```
+
+## Hallazgos: Distribución Geográfica
+
+El mapa revela un patrón geográfico Norte-Sur y Este:
+
+Alta Confianza: Los países nórdicos (Finlandia, Islandia, Suecia) muestran las puntuaciones más elevadas (tonos oscuros).
+
+Confianza Media: Europa Occidental (Alemania, Suiza, Países Bajos).
+
+Baja Confianza: Países del sur y este (Grecia, Polonia, Balcanes) presentan tonos claros, indicando menor confianza interpersonal.
+
+
+## Correlación: Consumo vs. Confianza
+
+```{r scatter, echo=FALSE}
+
+datos_scatter <- datos %>%
+  filter(essround == 11) %>%
+  select(netustm, ppltrst, nwspol) %>%
+  mutate(across(c(netustm, ppltrst, nwspol), as.numeric)) %>%
+  filter(netustm <= 1440, nwspol <= 1440, ppltrst <= 10) %>%
+  mutate(Horas_Internet = netustm / 60,
+         Horas_Noticias = nwspol / 60) %>%
+  drop_na()
+
+p_net <- ggplot(datos_scatter, aes(x = Horas_Internet, y = ppltrst)) +
+  geom_jitter(alpha = 0.05, color = "#2c3e50", height = 0.4, width = 0.2) +
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  scale_x_continuous(limits = c(0, 18)) +
+  labs(title = "Internet vs. Confianza", x = "Horas Internet", y = "Confianza") +
+  theme_minimal()
+
+p_news <- ggplot(datos_scatter, aes(x = Horas_Noticias, y = ppltrst)) +
+  geom_jitter(alpha = 0.05, color = "#2c3e50", height = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  scale_x_continuous(limits = c(0, 18)) + 
+  labs(title = "Medios Trad. vs. Confianza", x = "Horas Noticias Trad.", y = "") +
+  theme_minimal()
+
+grid.arrange(p_net, p_news, ncol = 2)
+
+```
+
+## Hallazgos: Diagramas de Dispersión
+
+Las relaciones encontradas son débiles pero opuestas:
+
+Internet: Tendencia marginalmente positiva. Mayor uso de Internet se asocia levemente con mayor confianza.
+
+Noticias Tradicionales: Tendencia levemente negativa. Mayor consumo de TV/radio se asocia con menor confianza.
+
+Dispersión: La gran "nube" de puntos indica que el tiempo de consumo no es un predictor determinante de la confianza; existen otros factores sociales más relevantes.
+
+
+
+## Perfiles de Consumo (Gráfico Mariposa)
+
+```{r butterfly, echo=FALSE}
+
+datos_butterfly <- datos %>%
+  filter(essround == 11) %>%
+  select(cntry, netustm, nwspol) %>%
+  mutate(netustm = as.numeric(netustm), nwspol = as.numeric(nwspol)) %>%
+  filter(netustm <= 1440, nwspol <= 1440) %>%
+  group_by(cntry) %>%
+  summarise(
+    Internet_h = mean(netustm, na.rm = TRUE) / 60,
+    TradNews_h = mean(nwspol,  na.rm = TRUE) / 60,
+    .groups = "drop"
+  ) %>%
+  mutate(Pais = recode(cntry, !!!nombres_paises),
+         TradNews_h_neg = -TradNews_h) %>%
+  drop_na(Pais) %>%
+  arrange(Internet_h) %>%
+  mutate(Pais = factor(Pais, levels = Pais))
+
+ggplot(datos_butterfly) +
+  geom_col(aes(x = Pais, y = TradNews_h_neg), fill = "#2c3e50") + # Noticias
+  geom_col(aes(x = Pais, y = Internet_h), fill = "#e74c3c") +    # Internet
+  coord_flip() +
+  scale_y_continuous(labels = function(x) abs(x), breaks = seq(-6, 6, by = 1)) +
+  labs(title = "Uso de Internet (Rojo) vs. Noticias Tradicionales (Azul)",
+       y = "Horas promedio diarias", x = "") +
+  theme_minimal()
+
+```
+
+## Hallazgos: Brecha Digital
+
+Asimetría: El uso de Internet (derecha, rojo) supera significativamente a los medios tradicionales (izquierda, azul) en casi todos los países.
+
+Países "Hiperconectados": Los países nórdicos (NO, SE) e Israel superan las 5 horas diarias de conexión promedio.
+
+Medios Tradicional: El consumo de noticias en medios tradicionales es bajo y homogéneo (aprox. 1 a 1.5 horas) en toda la región, independientemente del desarrollo tecnológico.
+
+
+## Conclusiones Finales
+
+El análisis de la Encuesta Social Europea (ESS) permite destacar tres grandes conclusiones:
+
+* **Patrones Geográficos Definidos:** Se observan claras diferencias regionales en los niveles de confianza, percepción de justicia y apoyo a lo largo de Europa.
+* **Impacto Digital Neutro:** El consumo de noticias vía Internet **no socava** la confianza interpersonal, lo que sugiere que los medios digitales no afectan negativamente la cohesión social.
+* **Valor Metodológico:** El uso de herramientas de visualización y paneles interactivos resulta fundamental para explorar relaciones complejas y respaldar interpretaciones basadas en evidencia sobre el cambio social.
+
+
+

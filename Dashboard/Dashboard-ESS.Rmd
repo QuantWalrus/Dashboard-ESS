@@ -10,45 +10,698 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-library(flexdashboard)
+
 # 1. Cargar Librerías
+
+library(flexdashboard)
 library(flexdashboard)
 library(shiny)
 library(tidyverse)
 library(plotly)
 library(sf)       
 library(viridis)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(shadowtext)
+library(leaflet)
+library(htmltools)
+
 
 # 2. Cargar Datos
-# IMPORTANTE: Usamos "../" para salir de la carpeta Dashboard y entrar a Datos
-# Asegúrate de poner el nombre EXACTO de tu archivo csv
-datos_europa <- read_csv("../Datos/ESS Theme - Media use and trust.csv") 
 
-# (Opcional) Si tienes un shapefile para el mapa, cárgalo aquí también
-# mapa_sf <- st_read("../Datos/tu_archivo_mapa.shp")
+ess_data <- read_csv("../Datos/Base de datos depurada.csv") 
+
+# Preparación del mapa
+mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Corrección del código de Noruega
+mapa_mundo$iso_a2[mapa_mundo$admin == "Norway"] <- "NO"
+
+# Calculo de coordenadas para las etiquetas
+coords <- st_coordinates(st_centroid(mapa_mundo))
+mapa_mundo <- cbind(mapa_mundo, coords)
+
+# Ajuste manual de la etiqueta de Noruega
+mapa_mundo$Y[mapa_mundo$admin == "Norway"] <- 62
+
+# 1. Diccionario de Países (Tu código)
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
+# 2. Calcular las 3 medias a la vez
+datos_sociales <- ess_data %>%
+  filter(essround == 11) %>%
+  select(cntry, ppltrst, pplfair, pplhlp) %>%
+  mutate(across(c(ppltrst, pplfair, pplhlp), as.numeric)) %>%
+  drop_na() %>%
+  group_by(cntry) %>%
+  summarise(
+    Media_Confianza = mean(ppltrst, na.rm = TRUE),
+    Media_Justicia = mean(pplfair, na.rm = TRUE),
+    Media_Ayuda = mean(pplhlp, na.rm = TRUE)
+  ) %>%
+  mutate(Nombre_Pais = recode(cntry, !!!nombres_paises))
+
+# 3. Unir con el mapa base (Usando tu objeto mapa_mundo corregido con Noruega)
+# Asegúrate de que 'mapa_mundo' ya tiene el fix de Noruega que hicimos antes
+mapa_completo <- mapa_mundo %>%
+  left_join(datos_sociales, by = c("iso_a2" = "cntry")) %>%
+  filter(!is.na(Media_Confianza)) # Filtramos los que tienen datos
+
+
+#GRAFICO MARIPOSA
+
+# GRAFICO DE HISTOGRAMA  
+datos_netustm <- ess_data %>%
+  filter(essround == 11) %>%
+  filter(netustm <= 1440) %>%
+  mutate(Horas = netustm / 60)
+
+# GRAFICO DE PERFILES
+
+# 1. Preparación y Creación de Perfiles
+datos_perfiles <- ess_data %>%
+  filter(essround == 11) %>%
+  # Limpieza de las 3 variables sociales + las de consumo
+  filter(!netustm %in% c(6666, 7777, 8888, 9999), 
+         !nwspol %in% c(7777, 8888, 9999),
+         !ppltrst %in% c(77, 88, 99),
+         !pplfair %in% c(77, 88, 99), # Agregamos filtro Justicia
+         !pplhlp %in% c(77, 88, 99)) %>% # Agregamos filtro Ayuda
+  # Crear perfiles (AI = Alto Internet, etc.)
+  mutate(
+    uso_internet = ifelse(netustm > median(netustm, na.rm = TRUE), "Alto Internet", "Bajo Internet"),
+    uso_noticias = ifelse(nwspol > median(nwspol, na.rm = TRUE), "Alto Noticias", "Bajo Noticias")
+  ) %>%
+  mutate(Perfil = paste(uso_internet, "-", uso_noticias))
+
+# 2. Resumir las 3 variables a la vez
+resumen_perfiles <- datos_perfiles %>%
+  group_by(Perfil) %>%
+  summarise(
+    Media_Confianza = weighted.mean(ppltrst, w = anweight, na.rm = TRUE),
+    Media_Justicia  = weighted.mean(pplfair, w = anweight, na.rm = TRUE),
+    Media_Ayuda     = weighted.mean(pplhlp, w = anweight, na.rm = TRUE)
+  ) %>%
+  # Reordenamos los niveles para que el gráfico se vea ordenado (opcional)
+  arrange(desc(Media_Confianza))
+
+
+#GRAFICO DE DISPERSION INTERNET 
+
+# 1. Limpieza y preparación
+datos_scatter_full <- ess_data %>%
+  filter(essround == 11) %>%
+  select(netustm, ppltrst, pplfair, pplhlp) %>%
+  # Convertir a numérico
+  mutate(across(c(netustm, ppltrst, pplfair, pplhlp), as.numeric)) %>%
+  # Filtros de calidad (0-10 y max 24h internet)
+  filter(
+    netustm <= 1440,
+    ppltrst <= 10, pplfair <= 10, pplhlp <= 10
+  ) %>%
+  mutate(Horas_Internet = netustm / 60) %>%
+  drop_na() %>%
+  # --- TRUCO PRO: JITTER MANUAL ---
+  # Como plotly no tiene 'geom_jitter' automático, agregamos un pequeño ruido aleatorio
+  # para visualización. Esto imita width=0.2 y height=0.4 de ggplot
+  mutate(
+    Horas_Jitter = Horas_Internet + runif(n(), -0.2, 0.2),
+    Trust_Jitter = ppltrst + runif(n(), -0.4, 0.4),
+    Fair_Jitter  = pplfair + runif(n(), -0.4, 0.4),
+    Help_Jitter  = pplhlp  + runif(n(), -0.4, 0.4)
+  )
+
+# 2. Calcular líneas de tendencia (Regresión Lineal)
+# Calculamos los modelos para dibujar las líneas rojas manualmente
+fit_trust <- lm(ppltrst ~ Horas_Internet, data = datos_scatter_full)
+fit_fair  <- lm(pplfair ~ Horas_Internet, data = datos_scatter_full)
+fit_help  <- lm(pplhlp  ~ Horas_Internet, data = datos_scatter_full)
+
+# Creamos un dataframe pequeño para dibujar las líneas (de 0 a 24 horas)
+grid_horas <- data.frame(Horas_Internet = seq(0, 24, length.out = 50))
+grid_horas$Pred_Trust <- predict(fit_trust, newdata = grid_horas)
+grid_horas$Pred_Fair  <- predict(fit_fair, newdata = grid_horas)
+grid_horas$Pred_Help  <- predict(fit_help, newdata = grid_horas)
+
+# GRAFICO DISPERSION NOTICIAS
+
+# 1. Limpieza y Jitter
+datos_news_full <- ess_data %>%
+  filter(essround == 11) %>%
+  select(nwspol, ppltrst, pplfair, pplhlp) %>%
+  # Convertir a numérico
+  mutate(across(c(nwspol, ppltrst, pplfair, pplhlp), as.numeric)) %>%
+  # Filtros de calidad
+  filter(
+    nwspol <= 1440, # Máximo 24h
+    ppltrst <= 10, pplfair <= 10, pplhlp <= 10
+  ) %>%
+  mutate(Horas_Noticias = nwspol / 60) %>%
+  drop_na() %>%
+  # --- JITTER MANUAL ---
+  # Usamos un rango menor en X (-0.1) porque el consumo de noticias suele ser más bajo
+  mutate(
+    Horas_Jitter = Horas_Noticias + runif(n(), -0.1, 0.1),
+    Trust_Jitter = ppltrst + runif(n(), -0.4, 0.4),
+    Fair_Jitter  = pplfair + runif(n(), -0.4, 0.4),
+    Help_Jitter  = pplhlp  + runif(n(), -0.4, 0.4)
+  )
+
+# 2. Calcular líneas de tendencia
+fit_news_trust <- lm(ppltrst ~ Horas_Noticias, data = datos_news_full)
+fit_news_fair  <- lm(pplfair ~ Horas_Noticias, data = datos_news_full)
+fit_news_help  <- lm(pplhlp  ~ Horas_Noticias, data = datos_news_full)
+
+# Grid para dibujar las líneas (de 0 a 24 horas)
+grid_news <- data.frame(Horas_Noticias = seq(0, 24, length.out = 50))
+grid_news$Pred_Trust <- predict(fit_news_trust, newdata = grid_news)
+grid_news$Pred_Fair  <- predict(fit_news_fair, newdata = grid_news)
+grid_news$Pred_Help  <- predict(fit_news_help, newdata = grid_news)
+
 ```
 
-Column {data-width=650}
+Row {data-height=600}
 -----------------------------------------------------------------------
 
-### Chart A
+### Geografía de variables sociales
 
 ```{r}
 
+# Definir la paleta de colores (Magma, invertida para que oscuro sea alto valor)
+# Usamos el dominio 0-10 porque las tres variables usan la misma escala
+paleta <- colorNumeric(
+  palette = "magma", 
+  domain = c(0, 10),
+  reverse = TRUE # (Oscuro = Alto)
+)
+
+# CREAR EL MAPA
+leaflet(data = mapa_completo) %>%
+  # A. Fondo del mapa (Limpio y grisáceo)
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  
+  # B. CAPA 1: CONFIANZA (Por defecto)
+  addPolygons(
+    fillColor = ~paleta(Media_Confianza),
+    weight = 1, color = "white", fillOpacity = 0.9,
+    group = "Confianza Interpersonal", # Nombre para el botón
+    # Lo que sale al pasar el mouse (Tooltip)
+    label = ~paste0(Nombre_Pais, ": ", round(Media_Confianza, 2)), 
+    highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
+  ) %>%
+  
+  # C. CAPA 2: JUSTICIA
+  addPolygons(
+    fillColor = ~paleta(Media_Justicia),
+    weight = 1, color = "white", fillOpacity = 0.9,
+    group = "Justicia Social", # Nombre para el botón
+    label = ~paste0(Nombre_Pais, ": ", round(Media_Justicia, 2)),
+    highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
+  ) %>%
+  
+  # D. CAPA 3: AYUDA
+  addPolygons(
+    fillColor = ~paleta(Media_Ayuda),
+    weight = 1, color = "white", fillOpacity = 0.9,
+    group = "Ayuda Social", # Nombre para el botón
+    label = ~paste0(Nombre_Pais, ": ", round(Media_Ayuda, 2)),
+    highlightOptions = highlightOptions(weight = 3, color = "#666", bringToFront = TRUE)
+  ) %>%
+  
+  # E. CONTROL DE CAPAS (Los botones de radio)
+  addLayersControl(
+    baseGroups = c("Confianza Int.", "Perc. Justicia", "Perc. Apoyo"),
+    options = layersControlOptions(collapsed = FALSE) # FALSE para que el menú esté siempre visible
+  ) %>%
+  
+  # F. LEYENDA (Compartida porque la escala 0-10 es igual para todos)
+  addLegend(
+    pal = paleta, 
+    values = c(0, 10), 
+    title = "Escala (0-10)",
+    position = "bottomright"
+  ) %>%
+  
+  # G. Vista inicial (Zoom en Europa)
+  setView(lng = 10, lat = 50, zoom = 3)
+
 ```
 
-Column {data-width=350}
+### Consumo de Medios tradicionales vs Internet
+
+```{r}
+
+# 1. CARGAMOS LIBRERÍAS AQUÍ MISMO (Para asegurar que no falten)
+library(tidyverse)
+library(plotly)
+library(crosstalk) # <--- Esta es la que faltaba para que funcione SharedData
+
+# 2. PREPARAR DATOS
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
+datos_mariposa <- ess_data %>%
+  filter(essround == 11) %>%
+  select(cntry, nwspol, netustm) %>%
+  mutate(
+    nwspol = as.numeric(nwspol),
+    netustm = as.numeric(netustm),
+    Nombre_Pais = recode(cntry, !!!nombres_paises)
+  ) %>%
+  filter(nwspol <= 1440, netustm <= 1440) %>% 
+  drop_na(nwspol, netustm) %>%
+  mutate(
+    Horas_Tradicional = nwspol / 60, 
+    Horas_Internet = netustm / 60
+  ) %>%
+  mutate(Region = case_when(
+    cntry %in% c("FI", "NO", "SE", "IS", "DK", "EE", "LT", "LV") ~ "Norte",
+    cntry %in% c("ES", "PT", "IT", "GR", "CY", "HR", "MT", "IL") ~ "Sur",
+    cntry %in% c("DE", "FR", "GB", "IE", "NL", "BE", "CH", "AT") ~ "Oeste",
+    TRUE ~ "Este"
+  )) %>%
+  group_by(Nombre_Pais, Region) %>%
+  summarise(
+    Media_Trad = mean(Horas_Tradicional, na.rm = TRUE),
+    Media_Net = mean(Horas_Internet, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(Media_Trad_Neg = -Media_Trad) %>%     
+  mutate(Total_Horas = Media_Trad + Media_Net) %>%
+  arrange(Total_Horas) %>%
+  mutate(Nombre_Pais = factor(Nombre_Pais, levels = unique(Nombre_Pais)))
+
+# 3. CONFIGURACIÓN DEL GRÁFICO
+max_horas_global <- ceiling(max(max(datos_mariposa$Media_Net), max(datos_mariposa$Media_Trad)))
+tick_vals <- seq(-max_horas_global, max_horas_global, by = 1)
+tick_text <- abs(tick_vals)
+
+# --- AQUI ESTABA EL ERROR ANTES ---
+# Ahora funcionará porque cargamos library(crosstalk) al inicio
+shared_data <- SharedData$new(datos_mariposa)
+
+# Creamos el objeto gráfico 'p'
+p <- plot_ly(shared_data, y = ~Nombre_Pais) %>%
+  add_trace(
+    x = ~Media_Net, name = 'Internet',
+    type = 'bar', orientation = 'h',
+    marker = list(color = '#E74C3C'),
+    hoverinfo = "y+x+name"
+  ) %>%
+  add_trace(
+    x = ~Media_Trad_Neg, name = 'Tradicional',
+    type = 'bar', orientation = 'h',
+    marker = list(color = '#2C3E50'),
+    hovertemplate = paste('%{y}', '<br>Tradicional: %{customdata:.2f} horas<extra></extra>'),
+    customdata = ~Media_Trad
+  ) %>%
+  layout(
+    barmode = 'overlay',
+    xaxis = list(
+      title = "Tiempo Promedio (Horas)",
+      tickmode = 'array',
+      tickvals = tick_vals,
+      ticktext = tick_text,
+      range = c(-max_horas_global * 1.1, max_horas_global * 1.1)
+    ),
+    yaxis = list(title = ""),
+    legend = list(orientation = "h", x = 0.3, y = 1.05),
+    margin = list(l = 100)
+  )
+
+# 4. MOSTRAR RESULTADO (Gráfico + Filtro)
+bscols(
+  widths = c(3, 9),
+  list(
+    div(style = "margin-bottom: 20px; margin-left: 10px;", 
+       filter_select("region", "Filtrar por Región:", shared_data, ~Region)
+      )
+  ),
+  p
+)
+
+```
+
+
+Row {data-height=400}
 -----------------------------------------------------------------------
 
-### Chart B
-
-```{r}
-"Hola mundo"
-```
-
-### Chart C
+### Hábitos de Consumo de internet
 
 ```{r}
 
+# Crear el gráfico estático
+p <- ggplot(datos_netustm, aes(x = netustm, weight = anweight)) +
+  geom_histogram(
+    binwidth = 30,
+    fill = "#2980b9", 
+    color = "white", 
+    alpha = 0.8
+  ) +
+  labs(
+    title = "Distribución del tiempo diario dedicado a Internet",
+    x = "Minutos al día",
+    y = "Frecuencia Ponderada"
+  ) +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(size = 8)) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )  
+
+# Convertir a interactivo
+ggplotly(p)
+
 ```
+
+### Correlación del tiempo dedicado a Internet vs la percepción de justicia, ayuda y nivel de confianza
+
+```{r}
+
+plot_ly() %>%
+  
+  # ------------------------------------------------------------
+  # GRUPO 1: CONFIANZA (Visible por defecto)
+  # ------------------------------------------------------------
+  # 1. Puntos (Trust)
+  add_markers(
+    data = datos_scatter_full,
+    x = ~Horas_Jitter, 
+    y = ~Trust_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#2c3e50", opacity = 0.1), # Opacity imita alpha=0.1
+    hoverinfo = "none", # Desactivamos tooltip en puntos para no saturar
+    visible = TRUE
+  ) %>%
+  # 2. Línea Tendencia (Trust)
+  add_lines(
+    data = grid_horas,
+    x = ~Horas_Internet,
+    y = ~Pred_Trust,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = TRUE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # GRUPO 2: JUSTICIA (Oculto al inicio)
+  # ------------------------------------------------------------
+  # 3. Puntos (Justicia)
+  add_markers(
+    data = datos_scatter_full,
+    x = ~Horas_Jitter, 
+    y = ~Fair_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#2980b9", opacity = 0.1), # Azul
+    hoverinfo = "none",
+    visible = FALSE
+  ) %>%
+  # 4. Línea Tendencia (Justicia)
+  add_lines(
+    data = grid_horas,
+    x = ~Horas_Internet,
+    y = ~Pred_Fair,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = FALSE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # GRUPO 3: AYUDA (Oculto al inicio)
+  # ------------------------------------------------------------
+  # 5. Puntos (Ayuda)
+  add_markers(
+    data = datos_scatter_full,
+    x = ~Horas_Jitter, 
+    y = ~Help_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#27ae60", opacity = 0.1), # Verde
+    hoverinfo = "none",
+    visible = FALSE
+  ) %>%
+  # 6. Línea Tendencia (Ayuda)
+  add_lines(
+    data = grid_horas,
+    x = ~Horas_Internet,
+    y = ~Pred_Help,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = FALSE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # LAYOUT Y MENÚS
+  # ------------------------------------------------------------
+  layout(
+    title = "Uso de Internet vs. Capital Social",
+    xaxis = list(title = "Tiempo diario en Internet (Horas)", range = c(0, 24)),
+    yaxis = list(title = "Nivel (0-10)", range = c(0, 11)),
+    showlegend = FALSE,
+    
+    updatemenus = list(
+      list(
+        y = 1.15, x = 0.1,
+        buttons = list(
+          # BOTÓN 1: CONFIANZA (Prende capas 1 y 2 - indices 0 y 1 en JS, pero lógica R usa vector bool)
+          list(method = "update",
+               args = list(list(visible = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE)),
+                           list(title = "Internet vs. Confianza Interpersonal",
+                                yaxis = list(title = "Nivel de Confianza (0-10)"))),
+               label = "Confianza"),
+          
+          # BOTÓN 2: JUSTICIA (Prende capas 3 y 4)
+          list(method = "update",
+               args = list(list(visible = c(FALSE, FALSE, TRUE, TRUE, FALSE, FALSE)),
+                           list(title = "Internet vs. Justicia Social",
+                                yaxis = list(title = "Percepción de Justicia (0-10)"))),
+               label = "Justicia"),
+          
+          # BOTÓN 3: AYUDA (Prende capas 5 y 6)
+          list(method = "update",
+               args = list(list(visible = c(FALSE, FALSE, FALSE, FALSE, TRUE, TRUE)),
+                           list(title = "Internet vs. Ayuda Social",
+                                yaxis = list(title = "Percepción de Ayuda (0-10)"))),
+               label = "Ayuda")
+        )
+      )
+    )
+  )
+
+```
+
+
+Row {data-height=500}
+-----------------------------------------------------------------------
+
+### Perfiles de consumo de internet y medios tradicionales
+
+```{r}
+
+# Definimos tus colores personalizados
+mis_colores <- c("BI - BN" = "#95a5a6", # Gris
+                 "BI - AN" = "#e74c3c", # Rojo
+                 "AI - BN" = "#3498db", # Azul
+                 "AI - AN" = "#2ecc71") # Verde
+
+plot_ly(resumen_perfiles, x = ~Perfil) %>%
+  
+  # --- CAPA 1: CONFIANZA (Visible por defecto) ---
+  add_trace(
+    y = ~Media_Confianza, 
+    type = 'bar', 
+    name = 'Confianza',
+    marker = list(color = c("#2ecc71", "#3498db", "#e74c3c", "#95a5a6")), # Colores manuales según orden
+    text = ~round(Media_Confianza, 2),
+    textposition = 'auto',
+    visible = TRUE  # Esta capa arranca visible
+  ) %>%
+  
+  # --- CAPA 2: JUSTICIA (Invisible al inicio) ---
+  add_trace(
+    y = ~Media_Justicia, 
+    type = 'bar', 
+    name = 'Justicia',
+    marker = list(color = c("#2ecc71", "#3498db", "#e74c3c", "#95a5a6")),
+    text = ~round(Media_Justicia, 2),
+    textposition = 'auto',
+    visible = FALSE # Oculta
+  ) %>%
+
+  # --- CAPA 3: AYUDA (Invisible al inicio) ---
+  add_trace(
+    y = ~Media_Ayuda, 
+    type = 'bar', 
+    name = 'Ayuda',
+    marker = list(color = c("#2ecc71", "#3498db", "#e74c3c", "#95a5a6")),
+    text = ~round(Media_Ayuda, 2),
+    textposition = 'auto',
+    visible = FALSE # Oculta
+  ) %>%
+
+  # --- CONFIGURACIÓN DEL MENÚ Y DISEÑO ---
+  layout(
+    title = "Perfiles según Variable Social",
+    yaxis = list(title = "Promedio (0-10)", range = c(0, 10)),
+    xaxis = list(title = "Perfil de Consumo"),
+    
+    # Aquí creamos el botón desplegable
+    updatemenus = list(
+      list(
+        y = 1.15, # Posición vertical del botón
+        x = 0.1,  # Posición horizontal
+        buttons = list(
+          
+          # Botón 1: Mostrar Confianza (Activa traza 0, Oculta 1 y 2)
+          list(method = "update",
+               args = list(list(visible = c(TRUE, FALSE, FALSE)), 
+                           list(title = "Nivel de Confianza según Perfil")),
+               label = "Confianza"),
+          
+          # Botón 2: Mostrar Justicia (Activa traza 1, Oculta 0 y 2)
+          list(method = "update",
+               args = list(list(visible = c(FALSE, TRUE, FALSE)),
+                           list(title = "Percepción de Justicia según Perfil")),
+               label = "Perc. Justicia"),
+          
+          # Botón 3: Mostrar Ayuda (Activa traza 2, Oculta 0 y 1)
+          list(method = "update",
+               args = list(list(visible = c(FALSE, FALSE, TRUE)),
+                           list(title = "Percepción de Ayuda según Perfil")),
+               label = "Perc. Ayuda")
+        )
+      )
+    ),
+    showlegend = FALSE # Ocultamos la leyenda automática porque ya tenemos colores
+  )
+
+```
+
+### Correlación del tiempo dedicado a las noticias vs percepción de justicia, ayuda y nivel de confianza
+
+```{r}
+
+plot_ly() %>%
+  
+  # ------------------------------------------------------------
+  # GRUPO 1: CONFIANZA (Visible por defecto)
+  # ------------------------------------------------------------
+  add_markers(
+    data = datos_news_full,
+    x = ~Horas_Jitter, 
+    y = ~Trust_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#2c3e50", opacity = 0.1), # Gris oscuro
+    hoverinfo = "none",
+    visible = TRUE
+  ) %>%
+  add_lines(
+    data = grid_news,
+    x = ~Horas_Noticias,
+    y = ~Pred_Trust,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = TRUE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # GRUPO 2: JUSTICIA (Oculto)
+  # ------------------------------------------------------------
+  add_markers(
+    data = datos_news_full,
+    x = ~Horas_Jitter, 
+    y = ~Fair_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#2980b9", opacity = 0.1), # Azul
+    hoverinfo = "none",
+    visible = FALSE
+  ) %>%
+  add_lines(
+    data = grid_news,
+    x = ~Horas_Noticias,
+    y = ~Pred_Fair,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = FALSE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # GRUPO 3: AYUDA (Oculto)
+  # ------------------------------------------------------------
+  add_markers(
+    data = datos_news_full,
+    x = ~Horas_Jitter, 
+    y = ~Help_Jitter,
+    name = "Encuestados",
+    marker = list(size = 5, color = "#27ae60", opacity = 0.1), # Verde
+    hoverinfo = "none",
+    visible = FALSE
+  ) %>%
+  add_lines(
+    data = grid_news,
+    x = ~Horas_Noticias,
+    y = ~Pred_Help,
+    name = "Tendencia",
+    line = list(color = "#e74c3c", width = 3),
+    visible = FALSE
+  ) %>%
+
+  # ------------------------------------------------------------
+  # CONFIGURACIÓN DEL MENÚ
+  # ------------------------------------------------------------
+  layout(
+    title = "Consumo de Noticias vs. Capital Social",
+    xaxis = list(title = "Tiempo diario en Noticias (Horas)", range = c(0, 24)),
+    yaxis = list(title = "Nivel (0-10)", range = c(0, 11)),
+    showlegend = FALSE,
+    
+    updatemenus = list(
+      list(
+        y = 1.15, x = 0.1,
+        buttons = list(
+          # BOTÓN 1: CONFIANZA
+          list(method = "update",
+               args = list(list(visible = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE)),
+                           list(title = "Noticias vs. Confianza Interpersonal",
+                                yaxis = list(title = "Nivel de Confianza (0-10)"))),
+               label = "Confianza"),
+          
+          # BOTÓN 2: JUSTICIA
+          list(method = "update",
+               args = list(list(visible = c(FALSE, FALSE, TRUE, TRUE, FALSE, FALSE)),
+                           list(title = "Noticias vs. Justicia Social",
+                                yaxis = list(title = "Percepción de Justicia (0-10)"))),
+               label = "Justicia"),
+          
+          # BOTÓN 3: AYUDA
+          list(method = "update",
+               args = list(list(visible = c(FALSE, FALSE, FALSE, FALSE, TRUE, TRUE)),
+                           list(title = "Noticias vs. Ayuda Social",
+                                yaxis = list(title = "Percepción de Ayuda (0-10)"))),
+               label = "Ayuda")
+        )
+      )
+    )
+  )
+
+```
+
+
 

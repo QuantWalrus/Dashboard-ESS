@@ -3,22 +3,39 @@
 \usepackage[utf8]{inputenc}
 \usepackage{graphicx}
 \usepackage{geometry}
+\usepackage{booktabs}
 \geometry{a4paper, margin=2.5cm}
 
-\title{Technical Report: ESS Data Analysis}
-\author{Your Name}
+\title{Informe: Análisis de datos de la encuesta The European Social Survey (ESS)}
+\author{Tafur Mendoza, Arnold A.}
 \date{\today}
 
 \begin{document}
-
 \maketitle
 
-\section{Introduction}
-This report summarizes the findings from the European Social Survey (ESS) project.
+\section{Introducción}
+El consumo de medios digitales, en contraste con los medios tradicionales, se ha consolidado como un componente central de la vida cotidiana en Europa, con el potencial de influir en diversas percepciones sociales, tales como la confianza interpersonal, la justicia percibida y el apoyo social percibido. En este contexto, comprender cómo los hábitos digitales se relacionan con estas dimensiones sociales resulta clave para el análisis de los cambios contemporáneos en el capital social.
+
+El presente informe tiene como objetivo explorar las relaciones entre los hábitos de consumo digital, el consumo de noticias a través de medios tradicionales y las percepciones sociales, utilizando datos provenientes de la Encuesta Social Europea (European Social Survey, ESS). El análisis se basa específicamente en la ronda 11 de la ESS, correspondiente al año 2023.
+
+Las variables analizadas incluyen el tiempo diario dedicado al uso de Internet, el tiempo total destinado al consumo de noticias de política y actualidad en medios tradicionales, la percepción de justicia, la percepción de apoyo y el nivel de confianza interpersonal. Estas variables permiten examinar de manera integrada la interacción entre patrones de consumo mediático y percepciones sociales relevantes.
+
+El objetivo general de este análisis es examinar cómo las percepciones sociales se relacionan con los patrones de consumo digital. De manera específica, se busca: (i) visualizar la distribución geográfica de la confianza interpersonal, la percepción de justicia y el apoyo social en Europa; (ii) evaluar si el consumo de noticias, tanto en medios tradicionales como en Internet, se asocia con la confianza interpersonal; y (iii) comparar los perfiles de los países europeos según su intensidad de uso de Internet.
 
 <<setup, include=FALSE>>=
 library(tidyverse)
 library(knitr)
+library(ggplot2)
+
+# Para el mapa
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(viridis)
+library(shadowtext) # Necesario para las letras con borde (instalar si falta)
+library(sf)         # Aseguramos carga de sf
+
+
 # Global options
 opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 @
@@ -31,38 +48,334 @@ Loading the cleaned dataset.
 datos <- read.csv("../Datos/Base de datos depurada.csv")
 @
 
-\section{Main Results}
+\section{Resultados principales}
 
-\subsection{Summary Table}
-Average trust levels by round.
+\subsection{Indicadores de resumen}
 
-<<summary_table, results='asis'>>=
-resumen <- datos %>%
-  group_by(essround) %>%
+En la tabla 1, se presenta los estadísticos descriptivos de las variables sociales y el consumo de medios, respecto a las variables justicia social, apoyo y la confianza interpersonal se sitúan por encima del punto medio teórico de la escala (0 a 10). Destaca la percepción de justicia (Justice) con el promedio más alto ($6.03$), indicando una valoración moderadamente positiva de la justicia en el sistema. Por su parte, la confianza interpersonal (Trust) y la disposición de ayuda (Help) muestran niveles medios similares ($5.34$ y $5.27$ respectivamente). Se evidencia una clara predominancia de los medios digitales. El tiempo promedio dedicado al uso de Internet es de aproximadamente 3.95 horas diarias ($237$ minutos), cifra que duplica ampliamente al tiempo destinado al consumo de noticias en medios tradicionales, el cual se sitúa en 1.52 horas diarias ($91.4$ minutos).
+
+Por su parte, la Tabla 2 analiza la relación entre estos hábitos y la confianza interpersonal, revelando que la cantidad de tiempo consumido no tiene un impacto significativo en la percepción social. Si bien el uso de Internet muestra una correlación marginalmente positiva ($r = 0.014$) y las noticias tradicionales una negativa ($r = -0.009$), ambos coeficientes son prácticamente nulos. Esto sugiere que la duración de la exposición a los medios no es un factor determinante para explicar los niveles de confianza interpersonal en Europa.
+
+<<summary_tables, results='asis'>>=
+# ---------------------------------------------------------
+# 1. MEDIDAS DE RESUMEN
+# ---------------------------------------------------------
+
+# Resumen de medias
+resumen_medias <- datos %>%
+  filter(essround == 11) %>%            
+  filter(netustm <= 1440, nwspol <= 1440) %>%
   summarise(
+    N_total = n(),
     Mean_Trust = mean(ppltrst, na.rm = TRUE),
-    N = n()
+    Mean_Justice = mean(pplfair, na.rm = TRUE),
+    Mean_Helpfulness = mean(pplhlp, na.rm = TRUE),
+    # Minutos
+    Mean_Net_Min = mean(netustm, na.rm = TRUE),
+    Mean_News_Min = mean(nwspol, na.rm = TRUE),
+    # Horas
+    Mean_Net_Hr = mean(netustm, na.rm = TRUE) / 60,
+    Mean_News_Hr = mean(nwspol, na.rm = TRUE) / 60
   )
 
-# Use format="latex" for clean tables in PDF
-kable(resumen, format = "latex", caption = "Trust Indicators by Round")
+# Correlaciones (Pearson) + N válido
+
+# 1. Crear primero un dataset limpio solo para este cálculo
+datos_limpios_cor <- datos %>%
+  filter(essround == 11) %>%
+  filter(netustm <= 1440, nwspol <= 1440) # Eliminamos los códigos 6666, 7777, etc.
+
+# 2. Calcular las correlaciones usando este dataset limpio
+# Internet vs Confianza
+r_net_trust <- cor(datos_limpios_cor$netustm, datos_limpios_cor$ppltrst, 
+                   use = "complete.obs", method = "pearson")
+n_net_trust <- sum(complete.cases(datos_limpios_cor$netustm, datos_limpios_cor$ppltrst))
+
+# Noticias vs Confianza
+r_news_trust <- cor(datos_limpios_cor$nwspol, datos_limpios_cor$ppltrst, 
+                    use = "complete.obs", method = "pearson")
+n_news_trust <- sum(complete.cases(datos_limpios_cor$nwspol, datos_limpios_cor$ppltrst))
+
+# 3. Crear el dataframe para kable (igual que antes)
+resumen_correlaciones <- data.frame(
+  Cor_Net_Trust = r_net_trust,
+  N_Valid_Net   = n_net_trust,
+  Cor_News_Trust = r_news_trust, 
+  N_Valid_News   = n_news_trust
+)
+# ---------------------------------------------------------
+# 2. GENERACIÓN DE TABLAS (OUTPUT)
+# ---------------------------------------------------------
+
+# Tabla 1: Estadísticos Descriptivos (Medias)
+kable(
+  resumen_medias,
+  format = "latex",
+  digits = 2,
+  booktabs = TRUE,
+  caption = "Estadísticos descriptivos: Medias y tiempos de uso",
+  # Usamos col.names para poner nombres más bonitos y cortos en el PDF
+  col.names = c("N", "Trust", "Justice", "Help", 
+                "Net(min)", "News(min)", "Net(h)", "News(h)")
+)
+
+# Espacio vertical entre tablas (opcional pero recomendado)
+cat("\\vspace{1cm}")
+
+# Tabla 2: Correlaciones
+kable(
+  resumen_correlaciones,
+  format = "latex",
+  digits = 3, # A veces 3 decimales es mejor para correlaciones
+  booktabs = TRUE,
+  caption = "Correlaciones de Pearson (Uso de Internet vs. Variables Sociales)",
+  col.names = c("r (Net-Trust)", "N", "r (News-Trust)", "N")
+)
 @
 
-\subsection{Visualization}
-Trust distribution analysis.
+\subsection{Visualización del nivel de confianza a nivel geográfico}
+
+El mapa ilustra los niveles promedio de confianza interpersonal en los países participantes de la Ronda 11 (2023) de la Encuesta Social Europea (ESS). La escala de color representa la puntuación media de la variable nivel de confianza (0 a 10), donde las tonalidades más oscuras indican una mayor confianza y las más claras, niveles menores. Se observa un patrón geográfico norte-sur y este, los países nórdicos, encabezados por Finlandia, Islandia y Suecia, muestran las puntuaciones más elevadas de confianza (tonos morados oscuros).Por otro lado Europa Occidental que incluyendo a Alemania, Suiza y Países Bajos presenta niveles intermedios-altos.Mientras que Se evidencia una menor confianza interpersonal en los países del sur y este de Europa como Grecia, Polonia, Eslovaquia y los Balcanes, representados en tonos amarillos y anaranjados.
 
 \begin{center}
-<<plot, fig=TRUE, height=4, width=6>>=
-ggplot(datos, aes(x = as.factor(essround), y = ppltrst)) +
-  geom_boxplot(fill = "lightblue") +
-  labs(title = "Trust Distribution by Round",
-       x = "Round", y = "Trust (0-10)") +
-  theme_minimal()
+<<fig_main, fig.show='hold', fig.height=4, fig.width=6, fig.cap="Distribución geográfica de la confianza interpersonal en Europa">>=
+
+# ==============================================================================
+# MAPA DE CONFIANZA (Versión Mejorada: Etiquetas legibles + Corrección Noruega)
+# ==============================================================================
+
+# 1. Diccionario de Países
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
+# 2. Procesamiento de Datos (Usamos tu versión segura con filtro <= 10)
+datos_mapa <- datos %>%
+  filter(essround == 11) %>%
+  select(cntry, ppltrst) %>%
+  mutate(ppltrst = as.numeric(ppltrst)) %>%
+  filter(ppltrst <= 10) %>%        # Filtro de seguridad (quita 66,77,88,99)
+  drop_na(ppltrst) %>%
+  group_by(cntry) %>%
+  summarise(Media_Confianza = mean(ppltrst, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Nombre_Etiqueta = recode(cntry, !!!nombres_paises))
+
+# 3. Preparación del Mapa y Geometría
+mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Corrección ISO para Noruega (Importante para que cruce los datos)
+mapa_mundo$iso_a2[mapa_mundo$admin == "Norway"] <- "NO"
+
+# Unir datos
+mapa_final <- mapa_mundo %>%
+  left_join(datos_mapa, by = c("iso_a2" = "cntry")) %>%
+  filter(!is.na(Media_Confianza))
+
+# --- CÁLCULO DE CENTROIDES PARA ETIQUETAS ---
+# Esto permite mover las etiquetas manualmente si estorban
+coords <- st_coordinates(st_centroid(mapa_final))
+mapa_final <- cbind(mapa_final, coords)
+
+# Corrección manual: Bajamos la etiqueta de Noruega para que se vea mejor
+mapa_final$Y[mapa_final$admin == "Norway"] <- 62 
+
+# 4. Gráfico Final
+ggplot(data = mapa_final) +
+  # Capa del mapa (colores)
+  geom_sf(aes(fill = Media_Confianza), color = "black", size = 0.2) +
+  
+  # Capa de texto MEJORADA (con sombra negra para leerse sobre cualquier color)
+  geom_shadowtext(
+    aes(x = X, y = Y, label = Nombre_Etiqueta), 
+    size = 1.8, 
+    fontface = "bold", 
+    color = "white",    # Color de la letra
+    bg.color = "black", # Color del borde (sombra)
+    bg.r = 0.1,         # Grosor del borde
+    check_overlap = FALSE
+  ) +
+  
+  # Coordenadas y Zoom (Europa)
+  coord_sf(xlim = c(-25, 45), ylim = c(30, 72), expand = FALSE) +
+  
+  # Escala de colores
+  scale_fill_viridis_c(option = "magma", direction = -1, name = "Confianza (0-10)") +
+  
+  # Etiquetas y Tema
+  labs(
+    title = "Confianza Interpersonal en Europa (2023)",
+    subtitle = "Promedio de nivel de confianza por país" # Opcional
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    panel.background = element_rect(fill = "#cbcbcb", color = NA), # Fondo gris mar
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"), # Título centrado y más grande
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+@
+
+\end{center}
+
+
+
+\subsection{Visualización de diagramas de dispersión}
+
+Los gráficos de dispersión ilustran la asociación bivariada entre el tiempo dedicado al consumo de medios (Internet y noticias en medios tradicionales) y los niveles de confianza interpersonal. Cada punto representa a un encuestado, y la línea roja indica la tendencia lineal general ajustada a los datos. Al analizar Internet vs. Confianza, Se observa una tendencia marginalmente positiva. Esto sugiere que, a medida que aumenta el tiempo de uso de Internet, la confianza interpersonal tiende a ser ligeramente mayor, aunque el incremento es mínimo a lo largo de la escala. Por otro lado, al analizar Noticias en medios tradicionales vs. Confianza, muestra una tendencia levemente negativa. Un mayor tiempo dedicado a informarse a través de medios tradicionales (televisión, radio, prensa) parece estar asociado con una ligera disminución en la percepción de confianza hacia los demás.
+
+Es importante destacar la alta dispersión de los datos en ambos gráficos (la "nube" de puntos cubre casi todo el espectro vertical de confianza para cualquier cantidad de horas). Esto, sumado a la planitud de las líneas de regresión, indica que la relación es débil. En otras palabras, aunque existen patrones opuestos (positivo para Internet, negativo para noticias en medios tradicionales), el tiempo de exposición por sí solo no es un predictor fuerte de la confianza interpersonal; existen otros factores sociales o individuales que tienen un peso mayor en esta variable.
+
+
+\begin{center}
+<<fig_scatter, fig.show='hold', fig.height=4, fig.width=6, fig.cap="Relación entre el consumo de medios y la confianza interpersonal">>=
+
+# ======================================
+# B) SCATTER: netustm vs ppltrst
+# ======================================
+
+datos_scatter <- datos %>%
+  filter(essround == 11) %>%
+  select(netustm, ppltrst) %>%
+  mutate(
+    netustm = as.numeric(netustm),
+    ppltrst = as.numeric(ppltrst)
+  ) %>%
+  filter(
+    netustm <= 1440,
+    ppltrst <= 10
+  ) %>%
+  mutate(Horas_Internet = netustm / 60) %>%
+  drop_na(Horas_Internet, ppltrst)
+
+p_net_trust <- ggplot(datos_scatter, aes(x = Horas_Internet, y = ppltrst)) +
+  geom_jitter(alpha = 0.1, color = "#2c3e50", height = 0.4, width = 0.2) +
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  scale_x_continuous(breaks = seq(0, 24, by = 4), limits = c(0, 24),
+                     name = "Tiempo diario en Internet (horas)") +
+  scale_y_continuous(breaks = seq(0, 10, by = 1), limits = c(0, 11),
+                     name = "Confianza interpersonal (0-10)") +
+  labs(
+    title = "Internet vs. Confianza interpersonal"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p_net_trust)
+
+# ======================================
+# C) SCATTER: nwspol vs ppltrst
+# ======================================
+
+datos_news_trust <- datos %>%
+  filter(essround == 11) %>%
+  select(nwspol, ppltrst) %>%
+  mutate(
+    nwspol = as.numeric(nwspol),
+    ppltrst = as.numeric(ppltrst)
+  ) %>%
+  filter(
+    nwspol <= 1440,
+    ppltrst <= 10
+  ) %>%
+  mutate(Horas_Noticias = nwspol / 60) %>%
+  drop_na(Horas_Noticias, ppltrst)
+
+p_news_trust <- ggplot(datos_news_trust, aes(x = Horas_Noticias, y = ppltrst)) +
+  geom_jitter(alpha = 0.1, color = "#2c3e50", height = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", color = "#e74c3c", se = TRUE) +
+  scale_x_continuous(breaks = seq(0, 24, by = 2), limits = c(0, 24),
+                     name = "Tiempo diario en noticias (horas)") +
+  scale_y_continuous(breaks = seq(0, 10, by = 1), limits = c(0, 11),
+                     name = "Confianza interpersonal (0-10)") +
+  labs(
+    title = "Noticias (medios tradicionales) vs. Confianza interpersonal"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p_news_trust)
+
+@
+
+\end{center}
+
+
+
+
+\subsection{Gráfico de mariposa: Internet vs. Medios tradicionales por país}
+
+
+El gráfico de mariposa presenta el tiempo promedio diario dedicado al uso de Internet (lado derecho, en rojo) frente al consumo de noticias en medios tradicionales como televisión, radio o prensa (lado izquierdo, en azul oscuro), desglosado por país. Se observa una asimetría generalizada a favor del uso de Internet. En la gran mayoría de los países, el tiempo dedicado a la red supera significativamente al tiempo dedicado a informarse por vías tradicionales. Los países nórdicos como Islandia, Noruega, Suecia, junto con Israel y el Reino Unido encabezan la lista con los promedios más altos de uso de Internet, superando o acercándose a las 5 horas diarias en promedio. Mientras que el consumo de noticias tradicionales se mantiene relativamente homogéneo y bajo (generalmente menos de 1.5 horas) en la mayoría de los países.
+
+
+\begin{center}
+<<fig_butterfly, fig.height=4.5, fig.width=7, fig.cap="Perfiles nacionales de consumo mediático (Internet vs. Medios Tradicionales)">>=
+
+# 1) Medias por país en HORAS
+datos_butterfly <- datos %>%
+  filter(essround == 11) %>%
+  select(cntry, netustm, nwspol) %>%
+  mutate(
+    netustm = as.numeric(netustm),
+    nwspol  = as.numeric(nwspol)
+  ) %>%
+  filter(netustm <= 1440, nwspol <= 1440) %>%
+  group_by(cntry) %>%
+  summarise(
+    Internet_h = mean(netustm, na.rm = TRUE) / 60,
+    TradNews_h = mean(nwspol,  na.rm = TRUE) / 60,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Pais = recode(cntry, !!!nombres_paises),
+    TradNews_h_neg = -TradNews_h
+  ) %>%
+  drop_na(Pais)
+
+# 2) Ordenar países por mayor uso de internet (puedes cambiar el criterio)
+datos_butterfly <- datos_butterfly %>%
+  arrange(Internet_h) %>%
+  mutate(Pais = factor(Pais, levels = Pais))
+
+# 3) Graficar mariposa
+ggplot(datos_butterfly) +
+  geom_col(aes(x = Pais, y = TradNews_h_neg), fill = "#2c3e50") +
+  geom_col(aes(x = Pais, y = Internet_h), fill = "#e74c3c") +
+  coord_flip() +
+  scale_y_continuous(
+    labels = function(x) abs(x),
+    name = "Tiempo promedio (horas/día)",
+    breaks = seq(-6, 6, by = 1)
+  ) +
+  labs(
+    title = "Consumo de Internet vs. noticias tradicionales por país",
+    subtitle = "Barras divergentes: noticias tradicionales (izquierda) e Internet (derecha)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12) 
+  )
+  
+
 @
 \end{center}
 
-\section{Conclusions}
-The analysis was performed on a total of \Sexpr{nrow(datos)} observations. 
-The global average trust score is \Sexpr{round(mean(datos$ppltrst, na.rm=TRUE), 2)}.
-
+\section{Conclusiones}
+Este análisis, basado en observaciones de la Encuesta Social Europea, destaca asociaciones significativas entre los hábitos digitales y las percepciones sociales. Se observan claros patrones geográficos en la confianza, la justicia y el apoyo en toda Europa. Además, el consumo de noticias a través de internet no parece socavar la confianza interpersonal, lo que sugiere que el uso de medios digitales no necesariamente tiene un efecto negativo en la cohesión social.
+En general, los hallazgos demuestran el valor de los paneles interactivos para explorar las complejas relaciones entre el comportamiento digital, el consumo de noticias de política o actualidad y las percepciones sociales, lo que respalda interpretaciones basadas en la evidencia del cambio social en Europa.
 \end{document}
