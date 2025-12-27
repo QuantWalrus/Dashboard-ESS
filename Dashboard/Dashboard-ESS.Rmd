@@ -82,6 +82,53 @@ mapa_completo <- mapa_mundo %>%
 
 #GRAFICO MARIPOSA
 
+# NOMBRE DE PAISES
+nombres_paises <- c(
+  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
+  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
+  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
+  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
+  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
+  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
+  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
+  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
+)
+
+datos_mariposa <- ess_data %>%
+  filter(essround == 11) %>%
+  select(cntry, nwspol, netustm) %>%
+  mutate(
+    nwspol = as.numeric(nwspol),
+    netustm = as.numeric(netustm),
+    # Asegúrate de tener tu vector nombres_paises definido previamente
+    Nombre_Pais = recode(cntry, !!!nombres_paises) 
+  ) %>%
+  filter(nwspol <= 1440, netustm <= 1440) %>% 
+  drop_na(nwspol, netustm) %>%
+  mutate(
+    Horas_Tradicional = nwspol / 60, 
+    Horas_Internet = netustm / 60
+  ) %>%
+  # --- AQUÍ AGREGAMOS LA REGIÓN ---
+  mutate(Region = case_when(
+    cntry %in% c("FI", "NO", "SE", "IS", "DK", "EE", "LT", "LV") ~ "Norte",
+    cntry %in% c("ES", "PT", "IT", "GR", "CY", "HR", "MT", "IL") ~ "Sur",
+    cntry %in% c("DE", "FR", "GB", "IE", "NL", "BE", "CH", "AT") ~ "Oeste",
+    TRUE ~ "Este"
+  )) %>%
+  # --- IMPORTANTE: AGRUPAR TAMBIÉN POR CNTRY ---
+  # Al incluir cntry aquí, se conservará en el resultado final
+  group_by(cntry, Nombre_Pais, Region) %>% 
+  summarise(
+    Media_Trad = mean(Horas_Tradicional, na.rm = TRUE),
+    Media_Net = mean(Horas_Internet, na.rm = TRUE),
+    .groups = 'drop' # Esto desagrupa al final para evitar advertencias
+  ) %>%
+  mutate(Media_Trad_Neg = -Media_Trad) %>%      
+  mutate(Total_Horas = Media_Trad + Media_Net) %>%
+  arrange(Total_Horas) %>%
+  mutate(Nombre_Pais = factor(Nombre_Pais, levels = unique(Nombre_Pais)))
+
 # GRAFICO DE HISTOGRAMA  
 datos_netustm <- ess_data %>%
   filter(essround == 11) %>%
@@ -142,8 +189,13 @@ datos_scatter_full <- ess_data %>%
     Trust_Jitter = ppltrst + runif(n(), -0.4, 0.4),
     Fair_Jitter  = pplfair + runif(n(), -0.4, 0.4),
     Help_Jitter  = pplhlp  + runif(n(), -0.4, 0.4)
-  )
-
+  ) %>%
+  mutate(Region = case_when(
+    cntry %in% c("FI", "NO", "SE", "IS", "DK", "EE", "LT", "LV") ~ "Norte",
+    cntry %in% c("ES", "PT", "IT", "GR", "CY", "HR", "MT", "IL") ~ "Sur",
+    cntry %in% c("DE", "FR", "GB", "IE", "NL", "BE", "CH", "AT") ~ "Oeste",
+    TRUE ~ "Este"
+  )) 
 
 # 2. Calcular líneas de tendencia para dibujarlas manualmente
 fit_trust <- lm(ppltrst ~ Horas_Internet, data = datos_scatter_full)
@@ -190,9 +242,27 @@ grid_news$Pred_Trust <- predict(fit_news_trust, newdata = grid_news)
 grid_news$Pred_Fair  <- predict(fit_news_fair, newdata = grid_news)
 grid_news$Pred_Help  <- predict(fit_news_help, newdata = grid_news)
 
+# --- PASO 1: CREAR EL CEREBRO COMPARTIDO (SharedData) ---
 
+grupo_id <- "Link_Mariposa_Scatter"
+
+# SharedData para la Mariposa (Datos Agregados)
+sd_mariposa <- SharedData$new(datos_mariposa, key = ~cntry, group = grupo_id)
+
+# SharedData para el Scatter (Datos Detallados)
+sd_scatter <- SharedData$new(datos_scatter_full, key = ~cntry, group = grupo_id)
+
+# Este filtro controla a todo el grupo 'Link_Mariposa_Scatter'
+filtro_region <- filter_select(
+  id = "region",
+  label = "Selecciona una Región:",
+  sharedData = sd_mariposa,
+  group = ~Region,
+  multiple = TRUE
+)
 
 ```
+
 
 Row {data-height=600}
 -----------------------------------------------------------------------
@@ -266,98 +336,40 @@ leaflet(data = mapa_completo) %>%
 
 ```{r}
 
-# 1. CARGAMOS LIBRERÍAS AQUÍ MISMO (Para asegurar que no falten)
-
-# 2. PREPARAR DATOS
-nombres_paises <- c(
-  "AT" = "Austria", "BE" = "Bélgica", "BG" = "Bulgaria", "CH" = "Suiza",
-  "CY" = "Chipre", "CZ" = "Rep. Checa", "DE" = "Alemania", "EE" = "Estonia",
-  "ES" = "España", "FI" = "Finlandia", "FR" = "Francia", "GB" = "Reino Unido",
-  "GR" = "Grecia", "HR" = "Croacia", "HU" = "Hungría", "IE" = "Irlanda",
-  "IS" = "Islandia", "IL" = "Israel", "IT" = "Italia", "LT" = "Lituania", 
-  "LV" = "Letonia", "ME" = "Montenegro", "MK" = "Macedonia N.", "NL" = "Países Bajos", 
-  "NO" = "Noruega", "PL" = "Polonia", "PT" = "Portugal", "RO" = "Rumania", 
-  "RS" = "Serbia", "SE" = "Suecia", "SI" = "Eslovenia", "SK" = "Eslovaquia", "UA" = "Ucrania"
-)
-
-datos_mariposa <- ess_data %>%
-  filter(essround == 11) %>%
-  select(cntry, nwspol, netustm) %>%
-  mutate(
-    nwspol = as.numeric(nwspol),
-    netustm = as.numeric(netustm),
-    Nombre_Pais = recode(cntry, !!!nombres_paises)
-  ) %>%
-  filter(nwspol <= 1440, netustm <= 1440) %>% 
-  drop_na(nwspol, netustm) %>%
-  mutate(
-    Horas_Tradicional = nwspol / 60, 
-    Horas_Internet = netustm / 60
-  ) %>%
-  mutate(Region = case_when(
-    cntry %in% c("FI", "NO", "SE", "IS", "DK", "EE", "LT", "LV") ~ "Norte",
-    cntry %in% c("ES", "PT", "IT", "GR", "CY", "HR", "MT", "IL") ~ "Sur",
-    cntry %in% c("DE", "FR", "GB", "IE", "NL", "BE", "CH", "AT") ~ "Oeste",
-    TRUE ~ "Este"
-  )) %>%
-  group_by(Nombre_Pais, Region) %>%
-  summarise(
-    Media_Trad = mean(Horas_Tradicional, na.rm = TRUE),
-    Media_Net = mean(Horas_Internet, na.rm = TRUE)
-  ) %>%
-  ungroup() %>%
-  mutate(Media_Trad_Neg = -Media_Trad) %>%     
-  mutate(Total_Horas = Media_Trad + Media_Net) %>%
-  arrange(Total_Horas) %>%
-  mutate(Nombre_Pais = factor(Nombre_Pais, levels = unique(Nombre_Pais)))
 
 # 3. CONFIGURACIÓN DEL GRÁFICO
-max_horas_global <- ceiling(max(max(datos_mariposa$Media_Net), max(datos_mariposa$Media_Trad)))
-tick_vals <- seq(-max_horas_global, max_horas_global, by = 1)
+max_horas <- ceiling(max(max(datos_mariposa$Media_Net), max(datos_mariposa$Media_Trad)))
+tick_vals <- seq(-max_horas, max_horas, by = 1)
 tick_text <- abs(tick_vals)
 
-# --- AQUI ESTABA EL ERROR ANTES ---
-# Ahora funcionará porque cargamos library(crosstalk) al inicio
-shar_data <- SharedData$new(datos_mariposa)
-
-# Creamos el objeto gráfico 'p'
-p <- plot_ly(shar_data, y = ~Nombre_Pais) %>%
-  add_trace(
-    x = ~Media_Net, name = 'Internet',
-    type = 'bar', orientation = 'h',
-    marker = list(color = '#E74C3C'),
-    hoverinfo = "y+x+name"
-  ) %>%
-  add_trace(
-    x = ~Media_Trad_Neg, name = 'Tradicional',
-    type = 'bar', orientation = 'h',
-    marker = list(color = '#2C3E50'),
-    hovertemplate = paste('%{y}', '<br>Tradicional: %{customdata:.2f} horas<extra></extra>'),
-    customdata = ~Media_Trad
-  ) %>%
+grafico_mariposa <- plot_ly(sd_mariposa, y = ~Nombre_Pais) %>%
+  add_trace(x = ~Media_Net, name = 'Internet', type = 'bar', orientation = 'h',
+            marker = list(color = '#E74C3C')) %>%
+  add_trace(x = ~Media_Trad_Neg, name = 'Tradicional', type = 'bar', orientation = 'h',
+            marker = list(color = '#2C3E50'),
+            customdata = ~Media_Trad,
+            hovertemplate = '%{y}<br>Tradicional: %{customdata:.2f} h<extra></extra>') %>%
   layout(
     barmode = 'overlay',
-    xaxis = list(
-      title = "Tiempo Promedio (Horas)",
-      tickmode = 'array',
-      tickvals = tick_vals,
-      ticktext = tick_text,
-      range = c(-max_horas_global * 1.1, max_horas_global * 1.1)
-    ),
+    title = "Consumo de Medios por País",
+    xaxis = list(title = "Horas (Izq: Tradicional | Der: Internet)",
+                 tickmode = 'array', tickvals = tick_vals, ticktext = tick_text,
+                 range = c(-max_horas*1.1, max_horas*1.1)),
     yaxis = list(title = ""),
-    legend = list(orientation = "h", x = 0.3, y = 1.05),
-    margin = list(l = 100)
+    legend = list(orientation = "h", x = 0.3, y = 1.05)
   )
 
-# 4. MOSTRAR RESULTADO (Gráfico + Filtro)
+
+# --- PASO 5: VISUALIZACIÓN FINAL ---
+# BLOQUE 1: Filtro y Mariposa
 bscols(
   widths = c(3, 9),
   list(
-    div(style = "margin-bottom: 20px; margin-left: 10px;", 
-       filter_select("region", "Filtrar por Región:", shar_data, ~Region)
-      )
+    htmltools::h3("Filtros"),
+    filtro_region,
+    htmltools::p("Selecciona 'Norte', 'Sur', etc. para resaltar esos países.")
   ),
-  p
+  grafico_mariposa  # <--- AQUÍ SOLO LA MARIPOSA
 )
 
 ```
@@ -400,114 +412,46 @@ ggplotly(p)
 
 ```{r}
 
-plot_ly() %>%
+grafico_scatter <- plot_ly() %>%
+  # -- GRUPO 1: CONFIANZA --
+  add_markers(data = sd_scatter, x = ~Horas_Jitter, y = ~Trust_Jitter,
+              marker = list(size = 5, color = "#2c3e50", opacity = 0.3), # Opacity baja para resaltar selección
+              name = "Encuestados", visible = TRUE) %>%
+  add_lines(data = grid_horas, x = ~Horas_Internet, y = ~Pred_Trust,
+            line = list(color = "#e74c3c", width = 3), name = "Tendencia", visible = TRUE) %>%
   
-  # ------------------------------------------------------------
-  # GRUPO 1: CONFIANZA (Visible por defecto)
-  # ------------------------------------------------------------
-  # 1. Puntos (Trust)
-  add_markers(
-    data = datos_scatter_full,
-    x = ~Horas_Jitter, 
-    y = ~Trust_Jitter,
-    name = "Encuestados",
-    marker = list(size = 5, color = "#2c3e50", opacity = 0.1), # Opacity imita alpha=0.1
-    hoverinfo = "none", # Desactivamos tooltip en puntos para no saturar
-    visible = TRUE
-  ) %>%
-  # 2. Línea Tendencia (Trust)
-  add_lines(
-    data = grid_horas,
-    x = ~Horas_Internet,
-    y = ~Pred_Trust,
-    name = "Tendencia",
-    line = list(color = "#e74c3c", width = 3),
-    visible = TRUE
-  ) %>%
+  # -- GRUPO 2: JUSTICIA --
+  add_markers(data = sd_scatter, x = ~Horas_Jitter, y = ~Fair_Jitter,
+              marker = list(size = 5, color = "#2980b9", opacity = 0.3),
+              name = "Encuestados", visible = FALSE) %>%
+  add_lines(data = grid_horas, x = ~Horas_Internet, y = ~Pred_Fair,
+            line = list(color = "#e74c3c", width = 3), name = "Tendencia", visible = FALSE) %>%
 
-  # ------------------------------------------------------------
-  # GRUPO 2: JUSTICIA (Oculto al inicio)
-  # ------------------------------------------------------------
-  # 3. Puntos (Justicia)
-  add_markers(
-    data = datos_scatter_full,
-    x = ~Horas_Jitter, 
-    y = ~Fair_Jitter,
-    name = "Encuestados",
-    marker = list(size = 5, color = "#2980b9", opacity = 0.1), # Azul
-    hoverinfo = "none",
-    visible = FALSE
-  ) %>%
-  # 4. Línea Tendencia (Justicia)
-  add_lines(
-    data = grid_horas,
-    x = ~Horas_Internet,
-    y = ~Pred_Fair,
-    name = "Tendencia",
-    line = list(color = "#e74c3c", width = 3),
-    visible = FALSE
-  ) %>%
+  # -- GRUPO 3: AYUDA --
+  add_markers(data = sd_scatter, x = ~Horas_Jitter, y = ~Help_Jitter,
+              marker = list(size = 5, color = "#27ae60", opacity = 0.3),
+              name = "Encuestados", visible = FALSE) %>%
+  add_lines(data = grid_horas, x = ~Horas_Internet, y = ~Pred_Help,
+            line = list(color = "#e74c3c", width = 3), name = "Tendencia", visible = FALSE) %>%
 
-  # ------------------------------------------------------------
-  # GRUPO 3: AYUDA (Oculto al inicio)
-  # ------------------------------------------------------------
-  # 5. Puntos (Ayuda)
-  add_markers(
-    data = datos_scatter_full,
-    x = ~Horas_Jitter, 
-    y = ~Help_Jitter,
-    name = "Encuestados",
-    marker = list(size = 5, color = "#27ae60", opacity = 0.1), # Verde
-    hoverinfo = "none",
-    visible = FALSE
-  ) %>%
-  # 6. Línea Tendencia (Ayuda)
-  add_lines(
-    data = grid_horas,
-    x = ~Horas_Internet,
-    y = ~Pred_Help,
-    name = "Tendencia",
-    line = list(color = "#e74c3c", width = 3),
-    visible = FALSE
-  ) %>%
-
-  # ------------------------------------------------------------
-  # LAYOUT Y MENÚS
-  # ------------------------------------------------------------
   layout(
-    title = "Uso de Internet vs. Confianza Interpersonal",
-    xaxis = list(title = "Tiempo diario en Internet (Horas)", range = c(0, 24)),
+    title = "Relación Internet vs Variables Sociales",
+    xaxis = list(title = "Horas Internet", range = c(0, 24)),
     yaxis = list(title = "Nivel (0-10)", range = c(0, 11)),
     showlegend = FALSE,
-    
     updatemenus = list(
       list(
         y = 1.15, x = 0.1,
         buttons = list(
-          # BOTÓN 1: CONFIANZA (Prende capas 1 y 2 - indices 0 y 1 en JS, pero lógica R usa vector bool)
-          list(method = "update",
-               args = list(list(visible = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE)),
-                           list(title = "Internet vs. Confianza Interpersonal",
-                                yaxis = list(title = "Nivel de Confianza (0-10)"))),
-               label = "Confianza"),
-          
-          # BOTÓN 2: JUSTICIA (Prende capas 3 y 4)
-          list(method = "update",
-               args = list(list(visible = c(FALSE, FALSE, TRUE, TRUE, FALSE, FALSE)),
-                           list(title = "Internet vs. Justicia Social",
-                                yaxis = list(title = "Percepción de Justicia (0-10)"))),
-               label = "Justicia"),
-          
-          # BOTÓN 3: AYUDA (Prende capas 5 y 6)
-          list(method = "update",
-               args = list(list(visible = c(FALSE, FALSE, FALSE, FALSE, TRUE, TRUE)),
-                           list(title = "Internet vs. Ayuda Social",
-                                yaxis = list(title = "Percepción de Ayuda (0-10)"))),
-               label = "Ayuda")
+          list(method = "update", args = list(list(visible = c(T,T,F,F,F,F)), list(title = "Internet vs. Confianza")), label = "Confianza"),
+          list(method = "update", args = list(list(visible = c(F,F,T,T,F,F)), list(title = "Internet vs. Justicia")), label = "Justicia"),
+          list(method = "update", args = list(list(visible = c(F,F,F,F,T,T)), list(title = "Internet vs. Ayuda")), label = "Ayuda")
         )
       )
     )
   )
+
+grafico_scatter
 
 
 ```
