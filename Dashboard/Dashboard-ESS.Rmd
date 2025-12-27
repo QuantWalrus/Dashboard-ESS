@@ -26,12 +26,13 @@ library(shadowtext)
 library(leaflet)
 library(htmltools)
 library(crosstalk)
+library(DT)
 
 # 2. Cargar Datos
 
 ess_data <- read_csv("../Datos/Base de datos depurada.csv") 
 
-# GRAFICO MAPA
+# GRAFICO MAPA 
 
 mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
 
@@ -39,6 +40,7 @@ mapa_mundo <- ne_countries(scale = "medium", returnclass = "sf")
 mapa_mundo$iso_a2[mapa_mundo$admin == "Norway"] <- "NO"
 
 # Calculo de coordenadas para las etiquetas
+
 coords <- st_coordinates(st_centroid(mapa_mundo))
 mapa_mundo <- cbind(mapa_mundo, coords)
 
@@ -72,13 +74,11 @@ datos_sociales <- ess_data %>%
   ) %>%
   mutate(Nombre_Pais = recode(cntry, !!!nombres_paises))
 
-# 3. Unir con el mapa base 
+# 3. Unir con el mapa base (Usando tu objeto mapa_mundo corregido con Noruega)
 
 mapa_completo <- mapa_mundo %>%
   left_join(datos_sociales, by = c("iso_a2" = "cntry")) %>%
   filter(!is.na(Media_Confianza)) # Filtramos los que tienen datos
-
---------------------------------------------------------------------------
 
 #GRAFICO MARIPOSA
 
@@ -88,7 +88,6 @@ datos_netustm <- ess_data %>%
   filter(netustm <= 1440) %>%
   mutate(Horas = netustm / 60)
 
---------------------------------------------------------------------------
 
 # GRAFICO DE PERFILES
 
@@ -119,24 +118,23 @@ resumen_perfiles <- datos_perfiles %>%
   # Reordenamos los niveles para que el gráfico se vea ordenado (opcional)
   arrange(desc(Media_Confianza))
 
---------------------------------------------------------------------------
+
   
 #GRAFICO DE DISPERSION INTERNET 
 
 # 1. Limpieza y preparación
+  
 datos_scatter_full <- ess_data %>%
   filter(essround == 11) %>%
-  select(netustm, ppltrst, pplfair, pplhlp) %>%
+  select(cntry, netustm, ppltrst, pplfair, pplhlp) %>%
   # Convertir a numérico
   mutate(across(c(netustm, ppltrst, pplfair, pplhlp), as.numeric)) %>%
-  # Filtros de calidad (0-10 y max 24h internet)
   filter(
-    netustm <= 1440,
+    netustm <= 1440, #Max 24 horas
     ppltrst <= 10, pplfair <= 10, pplhlp <= 10
   ) %>%
   mutate(Horas_Internet = netustm / 60) %>%
   drop_na() %>%
-  # --- TRUCO PRO: JITTER MANUAL ---
   # Como plotly no tiene 'geom_jitter' automático, agregamos un pequeño ruido aleatorio
   # para visualización. Esto imita width=0.2 y height=0.4 de ggplot
   mutate(
@@ -146,8 +144,8 @@ datos_scatter_full <- ess_data %>%
     Help_Jitter  = pplhlp  + runif(n(), -0.4, 0.4)
   )
 
-# 2. Calcular líneas de tendencia (Regresión Lineal)
-# Calculamos los modelos para dibujar las líneas rojas manualmente
+
+# 2. Calcular líneas de tendencia para dibujarlas manualmente
 fit_trust <- lm(ppltrst ~ Horas_Internet, data = datos_scatter_full)
 fit_fair  <- lm(pplfair ~ Horas_Internet, data = datos_scatter_full)
 fit_help  <- lm(pplhlp  ~ Horas_Internet, data = datos_scatter_full)
@@ -158,24 +156,21 @@ grid_horas$Pred_Trust <- predict(fit_trust, newdata = grid_horas)
 grid_horas$Pred_Fair  <- predict(fit_fair, newdata = grid_horas)
 grid_horas$Pred_Help  <- predict(fit_help, newdata = grid_horas)
 
---------------------------------------------------------------------------
+
+
 
 # GRAFICO DISPERSION NOTICIAS
 
-# 1. Limpieza y Jitter
 datos_news_full <- ess_data %>%
   filter(essround == 11) %>%
   select(nwspol, ppltrst, pplfair, pplhlp) %>%
-  # Convertir a numérico
   mutate(across(c(nwspol, ppltrst, pplfair, pplhlp), as.numeric)) %>%
-  # Filtros de calidad
   filter(
     nwspol <= 1440, # Máximo 24h
     ppltrst <= 10, pplfair <= 10, pplhlp <= 10
   ) %>%
   mutate(Horas_Noticias = nwspol / 60) %>%
   drop_na() %>%
-  # --- JITTER MANUAL ---
   # Usamos un rango menor en X (-0.1) porque el consumo de noticias suele ser más bajo
   mutate(
     Horas_Jitter = Horas_Noticias + runif(n(), -0.1, 0.1),
@@ -266,14 +261,12 @@ leaflet(data = mapa_completo) %>%
 
 ```
 
+
 ### Consumo de Medios tradicionales vs Internet
 
 ```{r}
 
 # 1. CARGAMOS LIBRERÍAS AQUÍ MISMO (Para asegurar que no falten)
-library(tidyverse)
-library(plotly)
-library(crosstalk) # <--- Esta es la que faltaba para que funcione SharedData
 
 # 2. PREPARAR DATOS
 nombres_paises <- c(
@@ -325,10 +318,10 @@ tick_text <- abs(tick_vals)
 
 # --- AQUI ESTABA EL ERROR ANTES ---
 # Ahora funcionará porque cargamos library(crosstalk) al inicio
-shared_data <- SharedData$new(datos_mariposa)
+shar_data <- SharedData$new(datos_mariposa)
 
 # Creamos el objeto gráfico 'p'
-p <- plot_ly(shared_data, y = ~Nombre_Pais) %>%
+p <- plot_ly(shar_data, y = ~Nombre_Pais) %>%
   add_trace(
     x = ~Media_Net, name = 'Internet',
     type = 'bar', orientation = 'h',
@@ -361,7 +354,7 @@ bscols(
   widths = c(3, 9),
   list(
     div(style = "margin-bottom: 20px; margin-left: 10px;", 
-       filter_select("region", "Filtrar por Región:", shared_data, ~Region)
+       filter_select("region", "Filtrar por Región:", shar_data, ~Region)
       )
   ),
   p
@@ -403,6 +396,7 @@ ggplotly(p)
 ```
 
 ### Correlación del tiempo dedicado a Internet vs la percepción de justicia, ayuda y nivel de confianza
+
 
 ```{r}
 
@@ -515,11 +509,13 @@ plot_ly() %>%
     )
   )
 
+
 ```
 
 
 Row {data-height=500}
 -----------------------------------------------------------------------
+
 
 ### Perfiles de consumo de internet y medios tradicionales
 
