@@ -3,3 +3,20 @@
 .RData
 .Ruserdata
 Dashboard/*.html
+
+#Archivo intermedio de Latex
+
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+
+*.tex
+*_cache/
+*_files/
+
+*.pdf

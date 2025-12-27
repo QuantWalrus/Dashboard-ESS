@@ -1,0 +1,68 @@
+% !Rnw weave = knitr
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+
+\title{Technical Report: ESS Data Analysis}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This report summarizes the findings from the European Social Survey (ESS) project.
+
+<<setup, include=FALSE>>=
+library(tidyverse)
+library(knitr)
+# Global options
+opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+@
+
+\section{Data Loading}
+Loading the cleaned dataset.
+
+<<load_data>>=
+# Ensure the path is correct relative to your 'Informe' folder
+datos <- read.csv("../Datos/Base de datos depurada.csv")
+@
+
+\section{Main Results}
+
+\subsection{Summary Table}
+Average trust levels by round.
+
+<<summary_table, results='asis'>>=
+resumen <- datos %>%
+  group_by(essround) %>%
+  summarise(
+    Mean_Trust = mean(ppltrst, na.rm = TRUE),
+    N = n()
+  )
+
+# Use format="latex" for clean tables in PDF
+kable(resumen, format = "latex", caption = "Trust Indicators by Round")
+@
+
+\subsection{Visualization}
+Trust distribution analysis.
+
+\begin{center}
+<<plot, fig=TRUE, height=4, width=6>>=
+ggplot(datos, aes(x = as.factor(essround), y = ppltrst)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Trust Distribution by Round",
+       x = "Round", y = "Trust (0-10)") +
+  theme_minimal()
+@
+\end{center}
+
+\section{Conclusions}
+The analysis was performed on a total of \Sexpr{nrow(datos)} observations. 
+The global average trust score is \Sexpr{round(mean(datos$ppltrst, na.rm=TRUE), 2)}.
+
+\end{document}

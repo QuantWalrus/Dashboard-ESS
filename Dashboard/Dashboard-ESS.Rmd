@@ -11,6 +11,21 @@ output:
 
 ```{r setup, include=FALSE}
 library(flexdashboard)
+# 1. Cargar Librerías
+library(flexdashboard)
+library(shiny)
+library(tidyverse)
+library(plotly)
+library(sf)       
+library(viridis)
+
+# 2. Cargar Datos
+# IMPORTANTE: Usamos "../" para salir de la carpeta Dashboard y entrar a Datos
+# Asegúrate de poner el nombre EXACTO de tu archivo csv
+datos_europa <- read_csv("../Datos/ESS Theme - Media use and trust.csv") 
+
+# (Opcional) Si tienes un shapefile para el mapa, cárgalo aquí también
+# mapa_sf <- st_read("../Datos/tu_archivo_mapa.shp")
 ```
 
 Column {data-width=650}
